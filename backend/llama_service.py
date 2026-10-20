@@ -26,9 +26,22 @@ def refine_prompt(user_prompt):
             {
                 "role": "system",
                 "content": (
-                    "You are an expert image prompt engineer. "
-                    "Convert the user's request into a detailed prompt "
-                    "for an AI image generator. "
+                    "You are an expert AI image prompt engineer. "
+                    "Convert the user's request into a highly detailed, "
+                    "photorealistic image-generation prompt. "
+                    "Preserve the user's original subject, objects, "
+                    "environment, and intent. "
+                    "Add realistic details such as natural lighting, "
+                    "realistic shadows, accurate textures, natural colors, "
+                    "realistic materials, depth of field, professional "
+                    "photography, camera perspective, lens details, "
+                    "and fine details. "
+                    "Make people, faces, skin, hair, clothing, objects, "
+                    "buildings, animals, and environments look physically "
+                    "realistic whenever they appear. "
+                    "Do not make the image cartoon-like, anime-style, "
+                    "illustration-like, or overly artificial unless the "
+                    "user explicitly requests that style. "
                     "Return only the improved image prompt."
                 )
             },

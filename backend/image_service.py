@@ -8,7 +8,7 @@ load_dotenv()
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 
-MODEL = "@cf/black-forest-labs/flux-1-schnell"
+MODEL = "@cf/black-forest-labs/flux-2-dev"
 
 
 def generate_image(prompt):
@@ -18,20 +18,21 @@ def generate_image(prompt):
     )
 
     headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"
     }
 
-    data = {
-        "prompt": prompt,
-        "steps": 4
+    files = {
+        "prompt": (None, prompt),
+        "steps": (None, "25"),
+        "width": (None, "1024"),
+        "height": (None, "768")
     }
 
     response = requests.post(
         url,
         headers=headers,
-        json=data,
-        timeout=180
+        files=files,
+        timeout=300
     )
 
     response.raise_for_status()
