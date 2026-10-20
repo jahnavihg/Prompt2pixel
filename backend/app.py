@@ -11,11 +11,6 @@ from llama_service import refine_prompt
 app = Flask(__name__)
 CORS(app)
 
-
-# ---------------------------------------------------------
-# GENERATED IMAGE FOLDER
-# ---------------------------------------------------------
-
 GENERATED_FOLDER = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "generated"
@@ -23,10 +18,6 @@ GENERATED_FOLDER = os.path.join(
 
 os.makedirs(GENERATED_FOLDER, exist_ok=True)
 
-
-# ---------------------------------------------------------
-# HOME
-# ---------------------------------------------------------
 
 @app.route("/", methods=["GET"])
 def home():
@@ -36,15 +27,9 @@ def home():
     })
 
 
-# ---------------------------------------------------------
-# GENERATE IMAGE
-# ---------------------------------------------------------
-
 @app.route("/generate", methods=["POST"])
 def generate():
-
     data = request.get_json(silent=True) or {}
-
     prompt = data.get("prompt", "").strip()
 
     if not prompt:
@@ -54,30 +39,26 @@ def generate():
         }), 400
 
     try:
-
         # Step 1: Improve the user's prompt using Llama 4
         refined_prompt = refine_prompt(prompt)
 
-        # Step 2: Generate the image using FLUX
+        # Step 2: Generate image using FLUX.2 Dev
         image = generate_image(refined_prompt)
 
         # Step 3: Create unique filename
-        timestamp = datetime.now().strftime(
-            "%Y%m%d_%H%M%S_%f"
-        )
-
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"image_{timestamp}.png"
 
-        # Step 4: Save image
         filepath = os.path.join(
             GENERATED_FOLDER,
             filename
         )
 
+        # Step 4: Save image
         with open(filepath, "wb") as file:
             file.write(image)
 
-        # Step 5: Return response
+        # Step 5: Return result
         return jsonify({
             "success": True,
             "message": "Image generated successfully",
@@ -89,6 +70,8 @@ def generate():
         })
 
     except Exception as e:
+        # Print the real error in Render Logs
+        print("GENERATE ERROR:", repr(e), flush=True)
 
         return jsonify({
             "success": False,
@@ -96,26 +79,16 @@ def generate():
         }), 500
 
 
-# ---------------------------------------------------------
-# VIEW IMAGE
-# ---------------------------------------------------------
-
 @app.route("/image/<filename>", methods=["GET"])
 def get_image(filename):
-
     return send_from_directory(
         GENERATED_FOLDER,
         filename
     )
 
 
-# ---------------------------------------------------------
-# DOWNLOAD IMAGE
-# ---------------------------------------------------------
-
 @app.route("/download/<filename>", methods=["GET"])
 def download_image(filename):
-
     return send_from_directory(
         GENERATED_FOLDER,
         filename,
@@ -123,28 +96,20 @@ def download_image(filename):
     )
 
 
-# ---------------------------------------------------------
-# IMAGE HISTORY
-# ---------------------------------------------------------
-
 @app.route("/history", methods=["GET"])
 def history():
-
     files = []
 
     for filename in os.listdir(GENERATED_FOLDER):
-
         if filename.lower().endswith(
             (".png", ".jpg", ".jpeg", ".webp")
         ):
-
             files.append({
                 "filename": filename,
                 "image_url": f"/image/{filename}",
                 "download_url": f"/download/{filename}"
             })
 
-    # Latest images first
     files.sort(
         key=lambda item: item["filename"],
         reverse=True
@@ -157,12 +122,7 @@ def history():
     })
 
 
-# ---------------------------------------------------------
-# START SERVER
-# ---------------------------------------------------------
-
 if __name__ == "__main__":
-
     app.run(
         host="0.0.0.0",
         port=5000,
