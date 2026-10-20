@@ -59,11 +59,16 @@ def refine_prompt(user_prompt):
         timeout=120
     )
 
-    response.raise_for_status()
+    # Show the actual Cloudflare error in Render Logs
+    if not response.ok:
+        print("LLAMA STATUS:", response.status_code, flush=True)
+        print("LLAMA RESPONSE:", response.text, flush=True)
+        response.raise_for_status()
 
     result = response.json()
 
     if not result.get("success"):
+        print("LLAMA API ERROR:", result.get("errors"), flush=True)
         raise Exception(str(result.get("errors")))
 
     return result["result"]["choices"][0]["message"]["content"].strip()
