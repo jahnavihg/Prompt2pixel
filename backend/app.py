@@ -8,6 +8,10 @@ from image_service import generate_images
 from llama_service import refine_prompt
 
 
+# ============================================================
+# APP SETUP
+# ============================================================
+
 app = Flask(__name__)
 CORS(app)
 
@@ -18,13 +22,8 @@ CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-GENERATED_FOLDER = os.path.join(
-    BASE_DIR, "generated"
-)
-
-UPLOAD_FOLDER = os.path.join(
-    BASE_DIR, "uploads"
-)
+GENERATED_FOLDER = os.path.join(BASE_DIR, "generated")
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 
 os.makedirs(GENERATED_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -49,68 +48,54 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload_image():
 
-    try:
-        image_file = request.files.get("image")
-
-        if not image_file or not image_file.filename:
-            return jsonify({
-                "success": False,
-                "message": "Image is required"
-            }), 400
-
-        timestamp = datetime.now().strftime(
-            "%Y%m%d_%H%M%S_%f"
-        )
-
-        original_name = image_file.filename
-
-        extension = os.path.splitext(
-            original_name
-        )[1].lower()
-
-        if not extension:
-            extension = ".png"
-
-        filename = (
-            f"uploaded_{timestamp}{extension}"
-        )
-
-        filepath = os.path.join(
-            UPLOAD_FOLDER,
-            filename
-        )
-
-        image_file.save(filepath)
-
-        print(
-            "IMAGE UPLOAD SUCCESS:",
-            filename,
-            flush=True
-        )
-
-        return jsonify({
-            "success": True,
-            "message": "Image uploaded successfully",
-            "filename": filename,
-            "image_url": f"/upload/{filename}"
-        })
-
-    except Exception as e:
-
-        print(
-            "UPLOAD ERROR:",
-            repr(e),
-            flush=True
-        )
-
+    if "image" not in request.files:
         return jsonify({
             "success": False,
-            "message": str(e)
-        }), 500
+            "error": "No image file provided"
+        }), 400
+
+    image = request.files["image"]
+
+    if image.filename == "":
+        return jsonify({
+            "success": False,
+            "error": "No image selected"
+        }), 400
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    original_name = image.filename
+    extension = os.path.splitext(original_name)[1].lower()
+
+    if extension not in [".png", ".jpg", ".jpeg", ".webp"]:
+        return jsonify({
+            "success": False,
+            "error": "Unsupported image format"
+        }), 400
+
+    filename = f"uploaded_{timestamp}{extension}"
+
+    filepath = os.path.join(
+        UPLOAD_FOLDER,
+        filename
+    )
+
+    image.save(filepath)
+
+    print(
+        f"IMAGE UPLOADED: {filename}",
+        flush=True
+    )
+
+    return jsonify({
+        "success": True,
+        "filename": filename,
+        "url": f"/upload/{filename}"
+    })
 
 
 # ============================================================
-# GENERATE
+# GENERATE IMAGES
 # ============================================================
 
 @app.route("/generate", methods=["POST"])
@@ -119,75 +104,58 @@ def generate():
     try:
 
         prompt = ""
-        image_uploaded = False
         uploaded_image_path = None
+        image_uploaded = False
 
-
-        # ====================================================
-        # JSON REQUEST
-        # ====================================================
+        # ----------------------------------------------------
+        # HANDLE JSON REQUEST
+        # ----------------------------------------------------
 
         if request.is_json:
 
-            data = (
-                request.get_json(
-                    silent=True
-                ) or {}
-            )
+            data = request.get_json()
 
-            prompt = (
-                data.get(
-                    "prompt",
-                    ""
-                ).strip()
-            )
+            prompt = data.get("prompt", "").strip()
 
-            image_uploaded = bool(
-                data.get(
-                    "image_uploaded",
-                    False
-                )
-            )
-
-
-        # ====================================================
-        # MULTIPART REQUEST
-        # ====================================================
+        # ----------------------------------------------------
+        # HANDLE MULTIPART REQUEST
+        # ----------------------------------------------------
 
         else:
 
-            prompt = (
-                request.form.get(
-                    "prompt",
-                    ""
-                ).strip()
-            )
+            prompt = request.form.get(
+                "prompt",
+                ""
+            ).strip()
 
-            image_file = request.files.get(
-                "image"
-            )
+            image = request.files.get("image")
 
-            if (
-                image_file
-                and image_file.filename
-            ):
+            if image:
 
-                image_uploaded = True
+                if image.filename == "":
+                    return jsonify({
+                        "success": False,
+                        "error": "Invalid image file"
+                    }), 400
+
+                extension = os.path.splitext(
+                    image.filename
+                )[1].lower()
+
+                if extension not in [
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".webp"
+                ]:
+                    return jsonify({
+                        "success": False,
+                        "error": "Unsupported image format"
+                    }), 400
 
                 timestamp = datetime.now().strftime(
                     "%Y%m%d_%H%M%S_%f"
                 )
-
-                original_name = (
-                    image_file.filename
-                )
-
-                extension = os.path.splitext(
-                    original_name
-                )[1].lower()
-
-                if not extension:
-                    extension = ".png"
 
                 filename = (
                     f"uploaded_{timestamp}{extension}"
@@ -198,126 +166,203 @@ def generate():
                     filename
                 )
 
-                image_file.save(
+                image.save(
                     uploaded_image_path
                 )
 
+                image_uploaded = True
+
                 print(
-                    "IMAGE UPLOADED:",
-                    filename,
+                    f"INPUT IMAGE SAVED: {filename}",
                     flush=True
                 )
 
-
-        # ====================================================
-        # CHECK PROMPT
-        # ====================================================
+        # ----------------------------------------------------
+        # VALIDATE PROMPT
+        # ----------------------------------------------------
 
         if not prompt:
 
             return jsonify({
                 "success": False,
-                "message": "Prompt is required"
+                "error": "Please enter a prompt"
             }), 400
 
+        print(
+            "----------------------------------------",
+            flush=True
+        )
 
-        # ====================================================
-        # INPUT TYPE
-        # ====================================================
+        print(
+            "STEP 1 - PROMPT PROCESSING",
+            flush=True
+        )
+
+        print(
+            f"USER PROMPT: {prompt}",
+            flush=True
+        )
 
         if image_uploaded:
 
             print(
-                "IMAGE INPUT DETECTED",
-                flush=True
-            )
-
-            print(
-                "Uploaded image:",
-                uploaded_image_path,
+                "IMAGE + PROMPT REQUEST",
                 flush=True
             )
 
         else:
 
             print(
-                "PROMPT ONLY INPUT",
+                "PROMPT ONLY REQUEST",
                 flush=True
             )
 
-
         # ====================================================
-        # STEP 1 — LLAMA 4
+        # STEP 1 - LLAMA 4 PROMPT REFINEMENT
         # ====================================================
 
-        print(
-            "STEP 1: Sending prompt to Llama 4...",
-            flush=True
-        )
+        try:
 
-        refined_prompt = refine_prompt(
-            prompt,
-            uploaded_image_path
-        )
+            refined_prompt = refine_prompt(
+                prompt,
+                uploaded_image_path
+            )
+
+        except Exception as e:
+
+            error_message = str(e)
+
+            print(
+                "LLAMA 4 ERROR:",
+                error_message,
+                flush=True
+            )
+
+            # ------------------------------------------------
+            # HANDLE CLOUDFLARE 429 QUOTA ERROR
+            # ------------------------------------------------
+
+            if (
+                "429" in error_message
+                or "daily free allocation" in error_message
+                or "Too Many Requests" in error_message
+            ):
+
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        "Llama 4 daily free quota has been "
+                        "exhausted. Please try again later."
+                    )
+                }), 429
+
+            # ------------------------------------------------
+            # OTHER LLAMA ERROR
+            # ------------------------------------------------
+
+            return jsonify({
+                "success": False,
+                "error": (
+                    "Llama 4 prompt processing failed. "
+                    "Please try again later."
+                )
+            }), 500
 
         print(
             "STEP 1 COMPLETED: Prompt refined",
             flush=True
         )
 
-
-        # ====================================================
-        # STEP 2 — IMAGE GENERATION
-        # ====================================================
-
         print(
-            "STEP 2: Generating images...",
+            f"REFINED PROMPT: {refined_prompt}",
             flush=True
         )
 
-        # IMPORTANT:
-        # The uploaded image path is passed here.
-        # This allows image_service.py to pass the
-        # image to the supported FLUX models.
+        # ====================================================
+        # STEP 2 - IMAGE GENERATION
+        # ====================================================
 
-        images = generate_images(
-            refined_prompt,
-            image_uploaded=image_uploaded,
-            image_path=uploaded_image_path
+        print(
+            "----------------------------------------",
+            flush=True
         )
+
+        print(
+            "STEP 2 - IMAGE GENERATION",
+            flush=True
+        )
+
+        try:
+
+            images = generate_images(
+                refined_prompt,
+                image_uploaded=image_uploaded,
+                image_path=uploaded_image_path
+            )
+
+        except Exception as e:
+
+            error_message = str(e)
+
+            print(
+                "IMAGE GENERATION ERROR:",
+                error_message,
+                flush=True
+            )
+
+            # ------------------------------------------------
+            # HANDLE QUOTA / RATE LIMIT
+            # ------------------------------------------------
+
+            if (
+                "429" in error_message
+                or "daily free allocation" in error_message
+                or "Too Many Requests" in error_message
+            ):
+
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        "Image generation service quota "
+                        "has been exhausted. Please try "
+                        "again later."
+                    )
+                }), 429
+
+            # ------------------------------------------------
+            # OTHER IMAGE ERROR
+            # ------------------------------------------------
+
+            return jsonify({
+                "success": False,
+                "error": (
+                    "Image generation failed. "
+                    "Please try again later."
+                )
+            }), 500
 
         print(
             "STEP 2 COMPLETED: Images generated",
             flush=True
         )
 
-
         # ====================================================
-        # SAVE GENERATED IMAGES
+        # STEP 3 - SAVE GENERATED IMAGES
         # ====================================================
 
-        results = []
+        saved_images = []
 
-        for item in images:
+        for index, item in enumerate(images):
 
-            model_name = item["model"]
             image_bytes = item["image"]
+            model_name = item["model"]
 
             timestamp = datetime.now().strftime(
                 "%Y%m%d_%H%M%S_%f"
             )
 
-            safe_model_name = (
-                model_name
-                .lower()
-                .replace(".", "")
-                .replace(" ", "_")
-                .replace("-", "_")
-            )
-
             filename = (
-                f"{safe_model_name}_"
-                f"{timestamp}.png"
+                f"generated_{timestamp}_{index + 1}.png"
             )
 
             filepath = os.path.join(
@@ -325,65 +370,90 @@ def generate():
                 filename
             )
 
-            with open(
-                filepath,
-                "wb"
-            ) as file:
+            with open(filepath, "wb") as image_file:
 
-                file.write(image_bytes)
-
-            results.append({
-                "model": model_name,
-                "filename": filename,
-                "image_url": f"/image/{filename}",
-                "download_url": f"/download/{filename}"
-            })
+                image_file.write(
+                    image_bytes
+                )
 
             print(
-                "IMAGE SAVED:",
-                filename,
+                f"SAVED IMAGE: {filename}",
                 flush=True
             )
 
+            saved_images.append({
+                "filename": filename,
+                "model": model_name,
+                "url": f"/image/{filename}",
+                "download_url": f"/download/{filename}"
+            })
+
+        # ----------------------------------------------------
+        # DELETE TEMPORARY UPLOAD
+        # ----------------------------------------------------
+
+        if uploaded_image_path:
+
+            try:
+
+                if os.path.exists(
+                    uploaded_image_path
+                ):
+
+                    os.remove(
+                        uploaded_image_path
+                    )
+
+            except Exception as e:
+
+                print(
+                    "UPLOAD CLEANUP ERROR:",
+                    str(e),
+                    flush=True
+                )
 
         # ====================================================
-        # RESPONSE
+        # FINAL RESPONSE
         # ====================================================
+
+        print(
+            "----------------------------------------",
+            flush=True
+        )
+
+        print(
+            f"TOTAL IMAGES GENERATED: {len(saved_images)}",
+            flush=True
+        )
 
         return jsonify({
             "success": True,
-            "message": "Images generated successfully",
             "prompt": prompt,
             "refined_prompt": refined_prompt,
-            "image_uploaded": image_uploaded,
-            "count": len(results),
-            "images": results
+            "images": saved_images,
+            "count": len(saved_images)
         })
-
 
     except Exception as e:
 
         print(
-            "GENERATE ERROR:",
-            repr(e),
+            "UNEXPECTED SERVER ERROR:",
+            str(e),
             flush=True
         )
 
         return jsonify({
             "success": False,
-            "message": str(e)
+            "error": "An unexpected server error occurred."
         }), 500
 
 
 # ============================================================
-# GET GENERATED IMAGE
+# SERVE GENERATED IMAGE
 # ============================================================
 
-@app.route(
-    "/image/<filename>",
-    methods=["GET"]
-)
-def get_image(filename):
+@app.route("/image/<filename>", methods=["GET"])
+def serve_image(filename):
 
     return send_from_directory(
         GENERATED_FOLDER,
@@ -392,14 +462,11 @@ def get_image(filename):
 
 
 # ============================================================
-# GET UPLOADED IMAGE
+# SERVE UPLOADED IMAGE
 # ============================================================
 
-@app.route(
-    "/upload/<filename>",
-    methods=["GET"]
-)
-def get_uploaded_image(filename):
+@app.route("/upload/<filename>", methods=["GET"])
+def serve_uploaded_image(filename):
 
     return send_from_directory(
         UPLOAD_FOLDER,
@@ -408,13 +475,10 @@ def get_uploaded_image(filename):
 
 
 # ============================================================
-# DOWNLOAD IMAGE
+# DOWNLOAD GENERATED IMAGE
 # ============================================================
 
-@app.route(
-    "/download/<filename>",
-    methods=["GET"]
-)
+@app.route("/download/<filename>", methods=["GET"])
 def download_image(filename):
 
     return send_from_directory(
@@ -428,47 +492,56 @@ def download_image(filename):
 # HISTORY
 # ============================================================
 
-@app.route(
-    "/history",
-    methods=["GET"]
-)
+@app.route("/history", methods=["GET"])
 def history():
 
-    files = []
+    images = []
 
-    for filename in os.listdir(
-        GENERATED_FOLDER
-    ):
+    try:
 
-        if filename.lower().endswith(
-            (
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".webp"
-            )
+        for filename in os.listdir(
+            GENERATED_FOLDER
         ):
 
-            files.append({
-                "filename": filename,
-                "image_url": f"/image/{filename}",
-                "download_url": f"/download/{filename}"
-            })
+            if filename.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp")
+            ):
 
-    files.sort(
-        key=lambda item: item["filename"],
-        reverse=True
-    )
+                images.append({
+                    "filename": filename,
+                    "url": f"/image/{filename}",
+                    "download_url": (
+                        f"/download/{filename}"
+                    )
+                })
 
-    return jsonify({
-        "success": True,
-        "count": len(files),
-        "images": files
-    })
+        images.sort(
+            key=lambda item: item["filename"],
+            reverse=True
+        )
+
+        return jsonify({
+            "success": True,
+            "count": len(images),
+            "images": images
+        })
+
+    except Exception as e:
+
+        print(
+            "HISTORY ERROR:",
+            str(e),
+            flush=True
+        )
+
+        return jsonify({
+            "success": False,
+            "error": "Unable to load image history"
+        }), 500
 
 
 # ============================================================
-# START FLASK
+# RUN APP
 # ============================================================
 
 if __name__ == "__main__":
