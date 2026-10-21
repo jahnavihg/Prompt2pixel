@@ -25,7 +25,10 @@ FLUX_SCHNELL = "@cf/black-forest-labs/flux-1-schnell"
 
 def generate_cloudflare_image(model, prompt, image_path=None):
 
-    print(f"GENERATING IMAGE USING: {model}", flush=True)
+    print(
+        f"GENERATING IMAGE USING: {model}",
+        flush=True
+    )
 
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/"
@@ -36,66 +39,113 @@ def generate_cloudflare_image(model, prompt, image_path=None):
         "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"
     }
 
-    data = {
-        "prompt": prompt,
-        "width": "1024",
-        "height": "1024"
-    }
+    # ========================================================
+    # FLUX.1 SCHNELL
+    # ========================================================
+    # FLUX.1 Schnell expects JSON.
+    # It does NOT accept width/height in the request body.
+    # ========================================================
 
-    files = None
-    image_file = None
+    if model == FLUX_SCHNELL:
 
-    # --------------------------------------------------------
-    # IMAGE INPUT
-    # --------------------------------------------------------
+        headers["Content-Type"] = "application/json"
 
-    if image_path:
-
-        print("ADDING INPUT IMAGE TO FLUX MODEL", flush=True)
-
-        extension = os.path.splitext(image_path)[1].lower()
-
-        if extension == ".png":
-            mime_type = "image/png"
-        elif extension in [".jpg", ".jpeg"]:
-            mime_type = "image/jpeg"
-        elif extension == ".webp":
-            mime_type = "image/webp"
-        else:
-            mime_type = "image/png"
-
-        image_file = open(image_path, "rb")
-
-        files = {
-            "input_image_0": (
-                os.path.basename(image_path),
-                image_file,
-                mime_type
-            )
+        data = {
+            "prompt": prompt
         }
-
-    # --------------------------------------------------------
-    # SEND REQUEST
-    # --------------------------------------------------------
-
-    try:
 
         response = requests.post(
             url,
             headers=headers,
-            data=data,
-            files=files,
+            json=data,
             timeout=300
         )
 
-    finally:
+    # ========================================================
+    # FLUX.2 KLEIN 4B / 9B
+    # ========================================================
+    # These models use multipart/form-data.
+    # This also allows an input image when provided.
+    # ========================================================
 
-        if image_file:
-            image_file.close()
+    else:
 
-    # --------------------------------------------------------
+        data = {
+            "prompt": prompt,
+            "width": "1024",
+            "height": "1024"
+        }
+
+        files = None
+        image_file = None
+
+        # ----------------------------------------------------
+        # OPTIONAL INPUT IMAGE
+        # ----------------------------------------------------
+
+        if image_path:
+
+            print(
+                "ADDING INPUT IMAGE TO FLUX MODEL",
+                flush=True
+            )
+
+            extension = os.path.splitext(
+                image_path
+            )[1].lower()
+
+            if extension == ".png":
+
+                mime_type = "image/png"
+
+            elif extension in [".jpg", ".jpeg"]:
+
+                mime_type = "image/jpeg"
+
+            elif extension == ".webp":
+
+                mime_type = "image/webp"
+
+            else:
+
+                mime_type = "image/png"
+
+            image_file = open(
+                image_path,
+                "rb"
+            )
+
+            files = {
+                "input_image_0": (
+                    os.path.basename(image_path),
+                    image_file,
+                    mime_type
+                )
+            }
+
+        # ----------------------------------------------------
+        # SEND REQUEST
+        # ----------------------------------------------------
+
+        try:
+
+            response = requests.post(
+                url,
+                headers=headers,
+                data=data,
+                files=files,
+                timeout=300
+            )
+
+        finally:
+
+            if image_file:
+
+                image_file.close()
+
+    # ========================================================
     # ERROR HANDLING
-    # --------------------------------------------------------
+    # ========================================================
 
     if not response.ok:
 
@@ -113,9 +163,9 @@ def generate_cloudflare_image(model, prompt, image_path=None):
 
         response.raise_for_status()
 
-    # --------------------------------------------------------
+    # ========================================================
     # PROCESS RESPONSE
-    # --------------------------------------------------------
+    # ========================================================
 
     result = response.json()
 
@@ -131,9 +181,9 @@ def generate_cloudflare_image(model, prompt, image_path=None):
             str(result.get("errors"))
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # GET GENERATED IMAGE
-    # --------------------------------------------------------
+    # ========================================================
 
     image_base64 = result["result"]["image"]
 
@@ -240,7 +290,10 @@ def generate_images(
     # IMAGE 1 — FLUX.2 KLEIN 4B
     # ========================================================
 
-    print("----------------------------------------", flush=True)
+    print(
+        "----------------------------------------",
+        flush=True
+    )
 
     print(
         "IMAGE 1: FLUX.2 Klein 4B",
@@ -258,12 +311,14 @@ def generate_images(
         "image": image
     })
 
-
     # ========================================================
     # IMAGE 2 — FLUX.2 KLEIN 9B
     # ========================================================
 
-    print("----------------------------------------", flush=True)
+    print(
+        "----------------------------------------",
+        flush=True
+    )
 
     print(
         "IMAGE 2: FLUX.2 Klein 9B",
@@ -281,21 +336,25 @@ def generate_images(
         "image": image
     })
 
-
     # ========================================================
     # IMAGE 3 — Z-IMAGE TURBO
     # ========================================================
 
     if not image_uploaded:
 
-        print("----------------------------------------", flush=True)
+        print(
+            "----------------------------------------",
+            flush=True
+        )
 
         print(
             "IMAGE 3: Z-Image Turbo",
             flush=True
         )
 
-        image = generate_zimage(prompt)
+        image = generate_zimage(
+            prompt
+        )
 
         images.append({
             "model": "Z-Image Turbo",
@@ -304,7 +363,10 @@ def generate_images(
 
     else:
 
-        print("----------------------------------------", flush=True)
+        print(
+            "----------------------------------------",
+            flush=True
+        )
 
         print(
             "IMAGE 3: Z-Image Turbo SKIPPED",
@@ -312,10 +374,10 @@ def generate_images(
         )
 
         print(
-            "Reason: Paralon currently supports text-to-image only",
+            "Reason: Paralon currently supports "
+            "text-to-image only",
             flush=True
         )
-
 
     # ========================================================
     # IMAGE 4 — FLUX.1 SCHNELL
@@ -323,7 +385,10 @@ def generate_images(
 
     if not image_uploaded:
 
-        print("----------------------------------------", flush=True)
+        print(
+            "----------------------------------------",
+            flush=True
+        )
 
         print(
             "IMAGE 4: FLUX.1 Schnell",
@@ -342,7 +407,10 @@ def generate_images(
 
     else:
 
-        print("----------------------------------------", flush=True)
+        print(
+            "----------------------------------------",
+            flush=True
+        )
 
         print(
             "IMAGE 4: FLUX.1 Schnell SKIPPED",
@@ -354,12 +422,14 @@ def generate_images(
             flush=True
         )
 
-
     # ========================================================
     # FINAL RESULT
     # ========================================================
 
-    print("----------------------------------------", flush=True)
+    print(
+        "----------------------------------------",
+        flush=True
+    )
 
     print(
         f"TOTAL IMAGES GENERATED: {len(images)}",

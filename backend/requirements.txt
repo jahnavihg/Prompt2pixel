@@ -3,3 +3,5 @@ flask-cors==6.0.5
 python-dotenv==1.2.2
 requests==2.34.2
 gunicorn==23.0.0
+PyPDF2
+python-docx
