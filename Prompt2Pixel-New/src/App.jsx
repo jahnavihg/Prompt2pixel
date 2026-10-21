@@ -1,17 +1,14 @@
-
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import mammoth from "mammoth";
 import "./App.css";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const API_BASE_URL = "https://prompt2pixel-e8yy.onrender.com";
 const API_URL = `${API_BASE_URL}/generate`;
 const HISTORY_KEY = "prompt2pixel-history";
-
-const examples = [
-  "A beautiful sunset over mountains",
-  "A cute golden retriever puppy",
-  "A cozy cabin in the forest",
-  "A futuristic city at night",
-];
 
 function getFullUrl(path) {
   if (!path) return "";
@@ -21,18 +18,20 @@ function getFullUrl(path) {
 function App() {
   const [prompt, setPrompt] = useState("");
   const [image, setImage] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [style, setStyle] = useState("Normal");
   const [page, setPage] = useState("home");
-  const [downloadUrl, setDownloadUrl] = useState("");
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState("");
+  const [uploadMessage, setUploadMessage] = useState("");
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(
-        localStorage.getItem(HISTORY_KEY) || "[]"
-      );
+      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       setHistory(Array.isArray(saved) ? saved : []);
     } catch {
       setHistory([]);
@@ -45,9 +44,114 @@ function App() {
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(items));
     } catch {
-      setError(
-        "Image created, but browser storage is full. Download it to keep it."
+      setError("Image created, but browser storage is full. Download it to keep it.");
+    }
+  }
+
+  function clearSelectedImage() {
+    if (selectedImagePreview) {
+      URL.revokeObjectURL(selectedImagePreview);
+    }
+
+    setSelectedImage(null);
+    setSelectedImagePreview("");
+    setUploadMessage("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleFileUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    setError("");
+
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
+    const documentExtensions = ["pdf", "docx", "txt"];
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError("Please choose a file smaller than 10 MB.");
+      return;
+    }
+
+    if (imageExtensions.includes(extension)) {
+      if (selectedImagePreview) {
+        URL.revokeObjectURL(selectedImagePreview);
+      }
+
+      setSelectedImage(file);
+      setSelectedImagePreview(URL.createObjectURL(file));
+      setUploadMessage(
+        `${file.name} selected. The current backend accepts text prompts only. Actual image-reference editing requires a backend update.`
       );
+      return;
+    }
+
+    if (!documentExtensions.includes(extension)) {
+      setError("Unsupported file. Choose PNG, JPG, WEBP, GIF, PDF, DOCX, or TXT.");
+      return;
+    }
+
+    if (selectedImagePreview) {
+      URL.revokeObjectURL(selectedImagePreview);
+    }
+
+    setSelectedImage(null);
+    setSelectedImagePreview("");
+    setUploadMessage(`Reading ${file.name}...`);
+
+    try {
+      let extractedText = "";
+
+      if (extension === "txt") {
+        extractedText = await file.text();
+      } else if (extension === "docx") {
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        extractedText = result.value || "";
+      } else if (extension === "pdf") {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pageTexts = [];
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+          const pdfPage = await pdf.getPage(pageNumber);
+          const content = await pdfPage.getTextContent();
+
+          pageTexts.push(
+            content.items
+              .map((item) => ("str" in item ? item.str : ""))
+              .join(" ")
+          );
+        }
+
+        extractedText = pageTexts.join("\n");
+      }
+
+      extractedText = extractedText.replace(/\s+/g, " ").trim();
+
+      if (!extractedText) {
+        throw new Error(
+          "No readable text was found. Scanned PDFs need OCR support."
+        );
+      }
+
+      setPrompt(extractedText.slice(0, 1000));
+
+      setUploadMessage(
+        extractedText.length > 1000
+          ? `Text extracted from ${file.name}. The first 1,000 characters were added to the prompt.`
+          : `Text extracted from ${file.name} and added to the prompt.`
+      );
+    } catch (uploadError) {
+      console.error("File upload error:", uploadError);
+      setUploadMessage("");
+      setError(uploadError.message || "Could not read this document.");
     }
   }
 
@@ -80,42 +184,24 @@ function App() {
 
       const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(
-          data.message || `Backend request failed: ${response.status}`
-        );
-      }
-
-      if (!data.success) {
-        throw new Error(
-          data.message || "The backend could not generate the image."
-        );
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "The backend could not generate the image.");
       }
 
       if (!data.image_url) {
-        throw new Error(
-          "The backend reported success but did not return an image URL."
-        );
+        throw new Error("The backend did not return an image URL.");
       }
 
-      // The backend returns a relative path such as /image/example.png.
       const imageUrl = getFullUrl(data.image_url);
       const fileUrl = data.download_url
         ? getFullUrl(data.download_url)
         : imageUrl;
 
-      // Check that the returned image can actually load.
       await new Promise((resolve, reject) => {
         const testImage = new Image();
-
-        testImage.onload = () => resolve();
+        testImage.onload = resolve;
         testImage.onerror = () =>
-          reject(
-            new Error(
-              "Image generation succeeded, but the image could not be loaded. Please check the backend image route."
-            )
-          );
-
+          reject(new Error("Image was generated, but it could not be loaded."));
         testImage.src = imageUrl;
       });
 
@@ -127,17 +213,14 @@ function App() {
         prompt: trimmedPrompt,
         image: imageUrl,
         downloadUrl: fileUrl,
-        filename:
-          data.filename || `prompt2pixel-${Date.now()}.png`,
+        filename: data.filename || `prompt2pixel-${Date.now()}.png`,
         createdAt: new Date().toLocaleString(),
       };
 
       let oldItems = [];
 
       try {
-        const stored = JSON.parse(
-          localStorage.getItem(HISTORY_KEY) || "[]"
-        );
+        const stored = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
         oldItems = Array.isArray(stored) ? stored : [];
       } catch {
         oldItems = [];
@@ -146,20 +229,13 @@ function App() {
       saveHistory([newItem, ...oldItems].slice(0, 10));
     } catch (err) {
       console.error("Image generation error:", err);
-
-      setError(
-        err.message ||
-          "Something went wrong while generating your image. Please try again."
-      );
+      setError(err.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
-  function downloadImage(
-    src,
-    name = "prompt2pixel-image.png"
-  ) {
+  function downloadImage(src, name = "prompt2pixel-image.png") {
     if (!src) return;
 
     const link = document.createElement("a");
@@ -176,9 +252,7 @@ function App() {
   function openHistory(item) {
     setPrompt(item.prompt);
     setImage(getFullUrl(item.image));
-    setDownloadUrl(
-      getFullUrl(item.downloadUrl || item.image)
-    );
+    setDownloadUrl(getFullUrl(item.downloadUrl || item.image));
     setError("");
     setPage("home");
   }
@@ -195,31 +269,23 @@ function App() {
     try {
       localStorage.removeItem(HISTORY_KEY);
     } catch {
-      // History is already cleared in the current session.
+      // History has already been cleared for this session.
     }
   }
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button
-          className="brand"
-          onClick={() => setPage("home")}
-        >
+        <button className="brand" onClick={() => setPage("home")}>
           <span className="brand-symbol">✦</span>
           <span>
             Prompt<span className="brand-accent">2Pixel</span>
           </span>
         </button>
 
-        <div className="tagline">
-          Turn your ideas into stunning images
-        </div>
+        <div className="tagline">Turn your ideas into stunning images</div>
 
-        <button
-          className="header-history"
-          onClick={() => setPage("history")}
-        >
+        <button className="header-history" onClick={() => setPage("history")}>
           ◷ <span>History</span>
           <span className="count">{history.length}</span>
         </button>
@@ -229,33 +295,21 @@ function App() {
         <aside className="sidebar">
           <div className="sidebar-nav">
             <button
-              className={
-                page === "home"
-                  ? "side-link selected"
-                  : "side-link"
-              }
+              className={page === "home" ? "side-link selected" : "side-link"}
               onClick={() => setPage("home")}
             >
               <span>⌂</span> Home
             </button>
 
             <button
-              className={
-                page === "history"
-                  ? "side-link selected"
-                  : "side-link"
-              }
+              className={page === "history" ? "side-link selected" : "side-link"}
               onClick={() => setPage("history")}
             >
               <span>◷</span> History
             </button>
 
             <button
-              className={
-                page === "about"
-                  ? "side-link selected"
-                  : "side-link"
-              }
+              className={page === "about" ? "side-link selected" : "side-link"}
               onClick={() => setPage("about")}
             >
               <span>ⓘ</span> About
@@ -275,24 +329,70 @@ function App() {
             <div className="studio-grid">
               <div className="left-column">
                 <section className="create-card">
-                  <div className="section-eyebrow">
-                    YOUR CREATIVE STUDIO
-                  </div>
+                  <div className="section-eyebrow">YOUR CREATIVE STUDIO</div>
 
                   <h1>
                     Create Your <span>Image</span>
                   </h1>
 
                   <p className="section-description">
-                    Describe what you want to see, and let AI
-                    turn your words into art.
+                    Describe what you want to see, and let AI turn your words into art.
                   </p>
 
                   <form onSubmit={generateImage}>
+                    <input
+                      ref={fileInputRef}
+                      className="hidden-file-input"
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.txt"
+                      onChange={handleFileUpload}
+                    />
+
+                    <div className="upload-section">
+                      <button
+                        className="upload-button"
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={loading}
+                      >
+                        <span className="upload-button-icon">↑</span>
+                        Upload Image or Document
+                      </button>
+
+                      <span className="upload-help">
+                        PNG, JPG, WEBP, PDF, DOCX or TXT · Max 10 MB
+                      </span>
+                    </div>
+
+                    {selectedImagePreview && (
+                      <div className="selected-file-card">
+                        <img
+                          className="selected-image-preview"
+                          src={selectedImagePreview}
+                          alt="Uploaded reference"
+                        />
+
+                        <div className="selected-file-details">
+                          <strong>{selectedImage?.name}</strong>
+                          <span>Image selected for reference</span>
+                        </div>
+
+                        <button
+                          className="remove-file-button"
+                          type="button"
+                          onClick={clearSelectedImage}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+
+                    {uploadMessage && (
+                      <div className="upload-message">{uploadMessage}</div>
+                    )}
+
                     <div className="prompt-label-row">
-                      <label htmlFor="prompt">
-                        Describe your image
-                      </label>
+                      <label htmlFor="prompt">Describe your image</label>
                       <span>{prompt.length}/1000</span>
                     </div>
 
@@ -300,50 +400,34 @@ function App() {
                       id="prompt"
                       maxLength={1000}
                       value={prompt}
-                      onChange={(e) =>
-                        setPrompt(e.target.value)
-                      }
+                      onChange={(event) => setPrompt(event.target.value)}
                       placeholder="e.g. A beautiful sunset over mountains, cinematic style..."
                       disabled={loading}
                     />
 
-                    <div className="style-label">
-                      CHOOSE A STYLE
-                    </div>
+                    <div className="style-label">CHOOSE A STYLE</div>
 
                     <div className="style-options">
-                      {[
-                        "Normal",
-                        "Realistic",
-                        "Anime",
-                        "Cartoon",
-                        "Artistic",
-                      ].map((item) => (
-                        <button
-                          key={item}
-                          type="button"
-                          className={
-                            style === item
-                              ? "style-chip active"
-                              : "style-chip"
-                          }
-                          onClick={() => setStyle(item)}
-                        >
-                          {item === "Normal" && "✧ "}
-                          {item === "Realistic" && "◈ "}
-                          {item === "Anime" && "✦ "}
-                          {item === "Cartoon" && "☺ "}
-                          {item === "Artistic" && "◉ "}
-                          {item}
-                        </button>
-                      ))}
+                      {["Normal", "Realistic", "Anime", "Cartoon", "Artistic"].map(
+                        (item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            className={style === item ? "style-chip active" : "style-chip"}
+                            onClick={() => setStyle(item)}
+                          >
+                            {item === "Normal" && "✧ "}
+                            {item === "Realistic" && "◈ "}
+                            {item === "Anime" && "✦ "}
+                            {item === "Cartoon" && "☺ "}
+                            {item === "Artistic" && "◉ "}
+                            {item}
+                          </button>
+                        )
+                      )}
                     </div>
 
-                    <button
-                      className="generate-button"
-                      type="submit"
-                      disabled={loading}
-                    >
+                    <button className="generate-button" type="submit" disabled={loading}>
                       {loading ? (
                         <>
                           <span className="spinner" />
@@ -351,62 +435,41 @@ function App() {
                         </>
                       ) : (
                         <>
-                          ✦ &nbsp; Generate Image{" "}
-                          <span>→</span>
+                          ✦ &nbsp; Generate Image <span>→</span>
                         </>
                       )}
                     </button>
 
                     <div className="small-note">
-                      Your prompt will be sent to the connected
-                      AI backend.
+                      Your prompt will be sent to the connected AI backend.
                     </div>
                   </form>
 
-                  {error && (
-                    <div className="error-box">{error}</div>
-                  )}
+                  {error && <div className="error-box">{error}</div>}
                 </section>
 
                 <section className="recent-card">
                   <div className="recent-heading">
                     <h2>◷ &nbsp; Recent Prompts</h2>
-                    <button
-                      onClick={() => setPage("history")}
-                    >
-                      View All ›
-                    </button>
+                    <button onClick={() => setPage("history")}>View All ›</button>
                   </div>
 
                   {history.length === 0 ? (
                     <div className="no-history">
                       <span>✧</span>
-                      <p>
-                        Your generated images will appear here.
-                      </p>
+                      <p>Your generated images will appear here.</p>
                     </div>
                   ) : (
                     <div className="recent-list">
                       {history.slice(0, 4).map((item) => (
-                        <div
-                          className="recent-item"
-                          key={item.id}
-                        >
-                          <button
-                            className="recent-open"
-                            onClick={() => openHistory(item)}
-                          >
-                            <img
-                              src={getFullUrl(item.image)}
-                              alt=""
-                            />
+                        <div className="recent-item" key={item.id}>
+                          <button className="recent-open" onClick={() => openHistory(item)}>
+                            <img src={getFullUrl(item.image)} alt="" />
                             <span className="recent-text">
                               <strong>{item.prompt}</strong>
                               <small>{item.createdAt}</small>
                             </span>
-                            <span className="recent-arrow">
-                              ›
-                            </span>
+                            <span className="recent-arrow">›</span>
                           </button>
                         </div>
                       ))}
@@ -418,38 +481,21 @@ function App() {
               <section className="image-card">
                 <div className="image-card-heading">
                   <h2>
-                    <span className="image-icon">▧</span>{" "}
-                    Generated Image
+                    <span className="image-icon">▧</span> Generated Image
                   </h2>
 
-                  {image && (
-                    <span className="ready-indicator">
-                      ● READY
-                    </span>
-                  )}
+                  {image && <span className="ready-indicator">● READY</span>}
                 </div>
 
-                <div
-                  className={`image-preview ${
-                    image ? "has-image" : ""
-                  }`}
-                >
+                <div className={`image-preview ${image ? "has-image" : ""}`}>
                   {loading ? (
                     <div className="preview-empty">
-                      <span className="preview-symbol rotating">
-                        ✦
-                      </span>
+                      <span className="preview-symbol rotating">✦</span>
                       <h3>Creating your image</h3>
-                      <p>
-                        Please wait while the AI creates your
-                        artwork.
-                      </p>
+                      <p>Please wait while the AI creates your artwork.</p>
                     </div>
                   ) : image ? (
-                    <img
-                      src={image}
-                      alt={prompt || "Generated artwork"}
-                    />
+                    <img src={image} alt={prompt || "Generated artwork"} />
                   ) : (
                     <div className="preview-empty">
                       <div className="placeholder-art">
@@ -459,8 +505,7 @@ function App() {
                       </div>
                       <h3>Your canvas awaits</h3>
                       <p>
-                        Describe your idea and click Generate
-                        Image to bring it to life.
+                        Describe your idea and click Generate Image to bring it to life.
                       </p>
                     </div>
                   )}
@@ -470,12 +515,7 @@ function App() {
                   <div className="image-actions">
                     <button
                       className="download-button"
-                      onClick={() =>
-                        downloadImage(
-                          downloadUrl || image,
-                          "prompt2pixel-image.png"
-                        )
-                      }
+                      onClick={() => downloadImage(downloadUrl || image)}
                     >
                       ↓ &nbsp; Download
                     </button>
@@ -484,14 +524,10 @@ function App() {
                       className="share-button"
                       onClick={async () => {
                         try {
-                          await navigator.clipboard.writeText(
-                            image
-                          );
+                          await navigator.clipboard.writeText(image);
                           alert("Image URL copied.");
                         } catch {
-                          alert(
-                            "Use Download to save your image."
-                          );
+                          alert("Use Download to save your image.");
                         }
                       }}
                     >
@@ -512,22 +548,15 @@ function App() {
             <section className="page-card">
               <div className="page-heading">
                 <div>
-                  <div className="section-eyebrow">
-                    YOUR COLLECTION
-                  </div>
+                  <div className="section-eyebrow">YOUR COLLECTION</div>
                   <h1>
                     Image <span>History</span>
                   </h1>
-                  <p>
-                    Revisit and download your previous creations.
-                  </p>
+                  <p>Revisit and download your previous creations.</p>
                 </div>
 
                 {history.length > 0 && (
-                  <button
-                    className="clear-button"
-                    onClick={clearHistory}
-                  >
+                  <button className="clear-button" onClick={clearHistory}>
                     Clear History
                   </button>
                 )}
@@ -537,31 +566,17 @@ function App() {
                 <div className="no-history large-empty">
                   <span>✧</span>
                   <h3>No images yet</h3>
-                  <p>
-                    Generate an image to start your collection.
-                  </p>
-                  <button
-                    className="generate-button"
-                    onClick={() => setPage("home")}
-                  >
+                  <p>Generate an image to start your collection.</p>
+                  <button className="generate-button" onClick={() => setPage("home")}>
                     Start Creating →
                   </button>
                 </div>
               ) : (
                 <div className="history-grid">
                   {history.map((item) => (
-                    <article
-                      className="history-item"
-                      key={item.id}
-                    >
-                      <button
-                        className="history-image"
-                        onClick={() => openHistory(item)}
-                      >
-                        <img
-                          src={getFullUrl(item.image)}
-                          alt={item.prompt}
-                        />
+                    <article className="history-item" key={item.id}>
+                      <button className="history-image" onClick={() => openHistory(item)}>
+                        <img src={getFullUrl(item.image)} alt={item.prompt} />
                       </button>
 
                       <div className="history-info">
@@ -569,31 +584,18 @@ function App() {
                         <small>{item.createdAt}</small>
 
                         <div className="history-actions">
-                          <button
-                            onClick={() => openHistory(item)}
-                          >
-                            Open
-                          </button>
+                          <button onClick={() => openHistory(item)}>Open</button>
                           <button
                             onClick={() =>
                               downloadImage(
-                                getFullUrl(
-                                  item.downloadUrl || item.image
-                                ),
-                                item.filename ||
-                                  "prompt2pixel-image.png"
+                                getFullUrl(item.downloadUrl || item.image),
+                                item.filename || "prompt2pixel-image.png"
                               )
                             }
                           >
                             Download
                           </button>
-                          <button
-                            onClick={() =>
-                              deleteHistory(item.id)
-                            }
-                          >
-                            Delete
-                          </button>
+                          <button onClick={() => deleteHistory(item.id)}>Delete</button>
                         </div>
                       </div>
                     </article>
@@ -605,24 +607,15 @@ function App() {
 
           {page === "about" && (
             <section className="page-card about-card">
-              <div className="section-eyebrow">
-                ABOUT THE PROJECT
-              </div>
-
+              <div className="section-eyebrow">ABOUT THE PROJECT</div>
               <h1>
                 Welcome to <span>Prompt2Pixel</span>
               </h1>
-
               <p>
-                Prompt2Pixel transforms text prompts into
-                AI-generated images through its connected
-                image-generation backend.
+                Prompt2Pixel transforms text prompts into AI-generated images through
+                its connected image-generation backend.
               </p>
-
-              <button
-                className="generate-button"
-                onClick={() => setPage("home")}
-              >
+              <button className="generate-button" onClick={() => setPage("home")}>
                 Start Creating →
               </button>
             </section>
