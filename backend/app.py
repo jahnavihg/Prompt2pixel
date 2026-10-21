@@ -11,6 +11,10 @@ from image_service import generate_images
 from llama_service import refine_prompt
 
 
+# ============================================================
+# APP
+# ============================================================
+
 app = Flask(__name__)
 CORS(app)
 
@@ -238,6 +242,7 @@ def generate():
             uploaded_file = request.files.get(
                 "file"
             )
+
 
             # ------------------------------------------------
             # BACKWARD COMPATIBILITY
@@ -493,6 +498,10 @@ def generate():
             )
 
 
+        # ====================================================
+        # LLAMA 4 PROMPT REFINEMENT
+        # ====================================================
+
         try:
 
             refined_prompt = refine_prompt(
@@ -511,31 +520,36 @@ def generate():
             )
 
 
+            # ------------------------------------------------
+            # IMPORTANT:
+            # If Llama 4 free quota is exhausted,
+            # continue using the original prompt.
+            # ------------------------------------------------
+
             if (
                 "429" in error_message
-                or "daily free allocation"
-                in error_message
-                or "Too Many Requests"
-                in error_message
+                or "daily free allocation" in error_message
+                or "Too Many Requests" in error_message
             ):
+
+                print(
+                    "LLAMA 4 QUOTA EXHAUSTED - "
+                    "CONTINUING WITH ORIGINAL PROMPT",
+                    flush=True
+                )
+
+                refined_prompt = prompt
+
+
+            else:
 
                 return jsonify({
                     "success": False,
                     "error": (
-                        "Llama 4 daily free quota "
-                        "has been exhausted. "
-                        "Please try again later."
+                        "Llama 4 prompt processing "
+                        "failed. Please try again later."
                     )
-                }), 429
-
-
-            return jsonify({
-                "success": False,
-                "error": (
-                    "Llama 4 prompt processing "
-                    "failed. Please try again later."
-                )
-            }), 500
+                }), 500
 
 
         print(
@@ -585,10 +599,8 @@ def generate():
 
             if (
                 "429" in error_message
-                or "daily free allocation"
-                in error_message
-                or "Too Many Requests"
-                in error_message
+                or "daily free allocation" in error_message
+                or "Too Many Requests" in error_message
             ):
 
                 return jsonify({
@@ -679,11 +691,13 @@ def generate():
 
         files_to_delete = []
 
+
         if uploaded_image_path:
 
             files_to_delete.append(
                 uploaded_image_path
             )
+
 
         if uploaded_document_path:
 
@@ -815,6 +829,7 @@ def download_image(filename):
 def history():
 
     images = []
+
 
     try:
 
