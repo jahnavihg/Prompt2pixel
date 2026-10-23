@@ -16,7 +16,20 @@ from llama_service import refine_prompt
 # ============================================================
 
 app = Flask(__name__)
-CORS(app)
+
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": [
+                "https://prompt2pixel-new.onrender.com",
+                "http://localhost:5173"
+            ]
+        }
+    },
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"]
+)
 
 
 # ============================================================
