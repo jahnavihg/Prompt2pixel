@@ -522,6 +522,7 @@ def generate():
                 uploaded_image_path
             )
 
+
         except Exception as e:
 
             error_message = str(e)
@@ -534,8 +535,13 @@ def generate():
 
 
             # ------------------------------------------------
-            # IMPORTANT:
-            # If Llama 4 free quota is exhausted,
+            # FALLBACK
+            #
+            # If Llama 4 is unavailable because of:
+            # 429 quota
+            # 499 client closed request
+            # timeout
+            #
             # continue using the original prompt.
             # ------------------------------------------------
 
@@ -543,10 +549,15 @@ def generate():
                 "429" in error_message
                 or "daily free allocation" in error_message
                 or "Too Many Requests" in error_message
+                or "499" in error_message
+                or "Client Closed Request" in error_message
+                or "timed out" in error_message
+                or "timeout" in error_message
+                or "Read timed out" in error_message
             ):
 
                 print(
-                    "LLAMA 4 QUOTA EXHAUSTED - "
+                    "LLAMA 4 UNAVAILABLE - "
                     "CONTINUING WITH ORIGINAL PROMPT",
                     flush=True
                 )
@@ -598,6 +609,7 @@ def generate():
                 image_uploaded=image_uploaded,
                 image_path=uploaded_image_path
             )
+
 
         except Exception as e:
 
